@@ -1,0 +1,9 @@
+trigger: none
+
+jobs:
+- template: templates/MDR-WebApp-Release-Template.yaml
+  parameters:
+    websiteName: 'mdr-web-mst-approve.ey.com'
+    envTags: 'mst'
+    definitionId: 'MDR-WebApp-Master_Approval-CI'
+    variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'

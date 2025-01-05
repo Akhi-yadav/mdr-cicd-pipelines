@@ -1,0 +1,27 @@
+trigger: none
+
+parameters:
+- name: vmList
+  displayName: 'VM Name'
+  type: object
+  default:
+  - 'EUNDMDRDEVMVM01'
+  - 'EUNDMDRDEVMVM02'
+  - 'EUNDMDRDMOMVM01'
+  - 'EUNDMDRMSTMVM01'
+  - 'EUNDMDRUATMVM01'
+
+- name: confirm
+  displayName: Confirm
+  type: boolean
+  default: false
+
+jobs:
+- ${{ if eq(parameters.confirm, true) }}:
+  - ${{ each vm in parameters.vmList }}:
+    - template: templates/MDR-WebApp-NON-PROD-VMP-Template.yaml
+      parameters:
+        subId: '6b307d3d-c41d-4d96-90ec-d3733cb335f6'
+        rG: 'EUNDMDRDEVRSG01'
+        VMName: ${{ vm }}
+        azureSubscription: 'MDR-NON-PROD'

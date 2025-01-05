@@ -1,0 +1,14 @@
+trigger: none
+resources:
+  repositories:
+  - repository: mdr-cicd-templates
+    type: github
+    name: ey-org/mdr-cicd-templates
+    # ref: feature-Akhil
+    endpoint: mdr-cicd-template
+
+jobs:
+ - template: templates/MDR-WebApp-SQLDatabase-Template.yaml
+   parameters:
+    websiteName: 'mdr-web-uat.ey.com'
+    variables: 'MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml'

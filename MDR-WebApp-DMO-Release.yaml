@@ -1,0 +1,27 @@
+trigger: none
+
+parameters:
+- name: websiteList
+  displayName: 'Web Site List (*****.mdr-web-demo.ey.com)'
+  type: object
+  default:
+    - 'rs5d7.mdr-web-demo.ey.com'
+    - 'taxpayer1.mdr-web-demo.ey.com'
+    - 'taxpayer2.mdr-web-demo.ey.com'
+    - 'intermediary.mdr-web-demo.ey.com'
+    - 'y7k9h.mdr-web-demo.ey.com'
+- name: deployment
+  displayName: Confirm deployment
+  type: boolean
+  default: false
+
+jobs:
+
+- ${{ if eq(parameters.deployment, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-Release-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        envTags: 'dmo'
+        definitionId: 'MDR-WebApp-DMO-CI-${{ websiteName }}'
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'

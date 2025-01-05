@@ -1,0 +1,9 @@
+trigger: none
+
+jobs:
+- template: templates/MDR-WebApp-Release-Template.yaml
+  parameters:
+    websiteName: 'mdr-web-dev.ey.com'
+    envTags: 'dev'
+    definitionId: 'MDR-WebApp-Dev-CI'
+    variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'

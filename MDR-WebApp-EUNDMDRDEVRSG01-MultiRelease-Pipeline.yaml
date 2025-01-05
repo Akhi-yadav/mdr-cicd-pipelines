@@ -1,0 +1,100 @@
+trigger: none
+
+parameters:
+- name: websiteList
+  displayName: 'Web Site List (*.mdr-web-*.ey.com)'
+  type: object
+  default:
+  - 'y7k9h.mdr-web-demo.ey.com'
+- name: envTags
+  displayName: 'Target VM or Availability set:'
+  type: string
+  default: ''
+  values:
+  - EUNDMDRDEVMVM02
+  - EUNDMDRDMOMVM01
+  - EUNDMDRMSTMVM01
+  - EUNDMDRUATMVM01
+- name: definitionId
+  displayName: 'CI pipeline (Artifact):'
+  type: string
+  default: 'MDR-WebApp-DMO-CI-y7k9h.mdr-web-demo.ey.com'
+- name: backendPoolName
+  displayName: 'AppGw Backend Pool:'
+  type: string
+  default: ''
+  values:
+  - mdr-webApp-dev-backend
+  - mdr-webApp-uat-backend
+  - mdr-webApp-mst-backend
+  - mdr-webApp-dmo-backend
+- name: action
+  displayName: 'Action for steps below:'
+  type: string
+  values:
+  - create
+  - delete
+- name: deployment
+  displayName: IIS Deployment
+  type: boolean
+  default: false
+- name: dns
+  displayName: DNS record
+  type: boolean
+  default: false
+- name: ssl
+  displayName: SSL certificate
+  type: boolean
+  default: false
+- name: sql
+  displayName: SQL databse
+  type: boolean
+  default: false
+- name: agw
+  displayName: AppGW configuration
+  type: boolean
+  default: false
+
+jobs:
+
+- ${{ if eq(parameters.dns, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-DNS-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        action: ${{ parameters.action }} # 'add' # remove
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'
+
+- ${{ if eq(parameters.ssl, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-SSL-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        action: ${{ parameters.action }} #'create' # revoke
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'
+
+- ${{ if eq(parameters.sql, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-SQLDatabase-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        action: ${{ parameters.action }} # 'create' # delete
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'
+
+- ${{ if eq(parameters.agw, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-Appgateway-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        action: ${{ parameters.action }} # 'create' # delete/create
+        backendPoolName: ${{ parameters.backendPoolName }}
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'
+
+- ${{ if eq(parameters.deployment, true) }}:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: templates/MDR-WebApp-Release-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        envTags: ${{ parameters.envTags }}
+        definitionId: ${{ parameters.definitionId }}
+        variables: 'MDR-WebApp-EUNDMDRDEVRSG01-Variables.yaml'
