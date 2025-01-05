@@ -1,0 +1,155 @@
+parameters:
+  websiteName: ''
+  backendPoolName: ''
+  variables: ''
+
+jobs:
+- job:
+  displayName: 'AppGW'
+  workspace:
+    clean: all
+  variables:
+    - template: ../variables/${{ parameters.variables }}
+      parameters:
+        websiteName: ${{ parameters.websiteName }}
+
+  steps:
+    - checkout: none
+
+    - task: AzureCLI@2
+      name: SetSubscription
+      displayName: 'Set Azure Subscription'
+      inputs:
+        azureSubscription: '${{ variables.azureSubscription }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az account set --subscription '${{ variables.subscriptionId }}'
+
+    - task: AzureCLI@2
+      name: CreateListener
+      displayName: 'Create Listener'
+      inputs:
+        azureSubscription: '${{ variables.azureSubscription }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          $secretId = (az keyvault secret show -n '${{ variables.certName }}'  --vault-name '${{ variables.KeyVaultName }}' | ConvertFrom-Json).id
+          $frontendIp = (az network application-gateway show -g '${{ variables.rgName }}' -n '${{ variables.gwName }}' | ConvertFrom-Json).frontendIPConfigurations.id
+
+          if (-Not((az network application-gateway frontend-port list --resource-group '${{ variables.rgName }}' --gateway-name '${{ variables.gwName }}' | ConvertFrom-Json | Where-Object { $_.port -eq 443 }).id)){
+            az network application-gateway frontend-port create --gateway-name '${{ variables.gwName }}' --name 'port_443' --resource-group '${{ variables.rgName }}' --port 443
+            Write-Host "Frontend port 'port_443' created."
+          } else {
+            Write-Host "Frontend port 'port_443' already exists."
+          }
+
+          $frontendPort = (az network application-gateway frontend-port list --resource-group '${{ variables.rgName }}' --gateway-name '${{ variables.gwName }}' | ConvertFrom-Json | Where-Object { $_.port -eq 443 }).id
+
+          if (-Not(az network application-gateway ssl-cert show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}')){
+            Write-Host "Cert doesn't exist > Creating cert..."
+            az network application-gateway ssl-cert create --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}' --key-vault-secret-id $secretId --no-wait true
+          } else {
+            Write-Host "Cert exists > Updating cert..."
+            az network application-gateway ssl-cert update --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}' --key-vault-secret-id $secretId --no-wait true
+          }
+
+          if (-Not(az network application-gateway http-listener show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}')){
+            az network application-gateway http-listener create `
+              --gateway-name '${{ variables.gwName }}' `
+              --name '${{ parameters.websiteName }}' `
+              --resource-group '${{ variables.rgName }}' `
+              --frontend-ip $frontendIp `
+              --frontend-port $frontendPort `
+              --host-name '${{ parameters.websiteName }}' `
+              --no-wait true `
+              --ssl-cert '${{ parameters.websiteName }}'
+            Write-Host "HTTP Listener '${{ parameters.websiteName }}' created."
+          } else {
+            Write-Host "HTTP Listener '${{ parameters.websiteName }}' already exists."
+          }
+
+    - task: AzureCLI@2
+      name: CreateHealthProbe
+      displayName: 'Create Health Probe'
+      inputs:
+        azureSubscription: '${{ variables.azureSubscription }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          if (-Not(az network application-gateway probe show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}')){
+            az network application-gateway probe create `
+              --gateway-name '${{ variables.gwName }}' `
+              --resource-group '${{ variables.rgName }}' `
+              --name '${{ parameters.websiteName }}' `
+              --protocol Https `
+              --host '${{ parameters.websiteName }}' `
+              --threshold 3 `
+              --path "/" `
+              --match-status-codes "200-500"
+            Write-Host "Health Probe '${{ parameters.websiteName }}' created."
+          } else {
+            Write-Host "Health Probe '${{ parameters.websiteName }}' already exists."
+          }
+
+    - task: AzureCLI@2
+      name: CreateBackendSettings
+      displayName: 'Create Backend Settings'
+      inputs:
+        azureSubscription: '${{ variables.azureSubscription }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          $healthProbe = (az network application-gateway probe show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}' | ConvertFrom-Json).id
+
+          if (-Not(az network application-gateway http-settings show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}')){
+            az network application-gateway http-settings create `
+              --gateway-name '${{ variables.gwName }}' `
+              --name '${{ parameters.websiteName }}' `
+              --port 443 `
+              --resource-group '${{ variables.rgName }}' `
+              --host-name '${{ parameters.websiteName }}' `
+              --no-wait true `
+              --probe $healthProbe `
+              --protocol Https `
+              --timeout 120
+            Write-Host "Backend HTTP Settings '${{ parameters.websiteName }}' created."
+          } else {
+            Write-Host "Backend HTTP Settings '${{ parameters.websiteName }}' already exists."
+          }
+
+    - task: AzureCLI@2
+      name: CreateRules
+      displayName: 'Create Rules'
+      inputs:
+        azureSubscription: '${{ variables.azureSubscription }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          $listenerId = (az network application-gateway http-listener show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}' | ConvertFrom-Json).id
+          $backendSettingsId = (az network application-gateway http-settings show --gateway-name '${{ variables.gwName }}' --name '${{ parameters.websiteName }}' --resource-group '${{ variables.rgName }}' | ConvertFrom-Json).id
+
+          if (-Not(az network application-gateway rule list --gateway-name '${{ variables.gwName }}' --resource-group '${{ variables.rgName }}' | ConvertFrom-Json | Where-Object { $_.name -eq '${{ parameters.websiteName }}' })){
+            $priority = (az network application-gateway rule list --gateway-name '${{ variables.gwName }}' --resource-group '${{ variables.rgName }}' | ConvertFrom-Json | Select-Object -Last 1).priority
+            $priority = $priority + 1
+
+            if (-Not(az network application-gateway address-pool show --gateway-name '${{ variables.gwName }}' --resource-group '${{ variables.rgName }}' --name '${{ parameters.backendPoolName }}')){
+              az network application-gateway address-pool create --gateway-name '${{ variables.gwName }}' --resource-group '${{ variables.rgName }}' --name '${{ parameters.backendPoolName }}'
+              Write-Host "Address pool '${{ parameters.backendPoolName }}' created."
+            } else {
+              Write-Host "Address pool '${{ parameters.backendPoolName }}' already exists."
+            }
+
+            az network application-gateway rule create `
+              --gateway-name '${{ variables.gwName }}' `
+              --name '${{ parameters.websiteName }}' `
+              --resource-group '${{ variables.rgName }}' `
+              --address-pool '${{ parameters.backendPoolName }}' `
+              --http-listener $listenerId `
+              --http-settings $backendSettingsId `
+              --no-wait true `
+              --priority $priority
+            Write-Host "Rule '${{ parameters.websiteName }}' created."
+          } else {
+            Write-Host "Rule '${{ parameters.websiteName }}' already exists."
+          }

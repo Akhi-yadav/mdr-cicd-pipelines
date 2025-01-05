@@ -1,0 +1,58 @@
+parameters:
+  environment: ''
+  envTags: ''
+  definitionId: ''
+  variables: ''
+
+jobs:
+  # Download new version's Artifact
+  - deployment: downloadNewArtifact
+    displayName: 'Download New Artifact'
+    variables:
+        - template: ${{ parameters.variables }}
+    environment:
+      name: '${{ parameters.environment }}'
+      tags: '${{ parameters.envTags }}'
+      resourceType: VirtualMachine
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+
+          # Clear the F:\Artifact folder
+          - task: PowerShell@2
+            displayName: Clean The files from the Artifact folder
+            inputs:
+              filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/CleanFolder.ps1'
+              arguments:
+                  -FolderPath  'F:\Artifact' 
+
+          # Clear the F:\BuildZip folder
+          - task: PowerShell@2
+            displayName: Clean The files from the BuildZip folder
+            inputs:
+              filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/CleanFolder.ps1'
+              arguments:
+                  -FolderPath  'F:\BuildZip'   
+
+          # Download the new artifact     
+          - task: DownloadPipelineArtifact@2
+            displayName: Download_Artifact
+            inputs:
+              buildType: 'specific'
+              project: ${{ variables.projectId }}
+              definition: ${{ parameters.definitionId }}
+              buildVersionToDownload: 'latest'
+              artifactName: 'drop'
+              itemPattern: '**/*.zip'
+              targetPath: 'F:\BuildZip'
+
+          # Task to unzip the artifact
+          - task: ExtractFiles@1
+            displayName: Unzip Artifact
+            inputs:
+              archiveFilePatterns: 'F:\BuildZip\*.zip'
+              destinationFolder: 'F:\Artifact'
+              cleanDestinationFolder: true
+        

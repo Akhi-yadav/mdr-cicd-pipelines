@@ -1,0 +1,142 @@
+
+# MDR-NON-PROD Web Deployment
+
+parameters:
+  websiteName: ''
+  variables: ''
+
+jobs:
+- job:
+  displayName: 'Create DNS ${{ parameters.websiteName }}'
+  workspace:
+    clean: all
+  variables:
+    - template: ../variables/${{ parameters.variables }}
+      parameters:
+        websiteName: ${{ parameters.websiteName }}
+  
+  steps:
+
+  - checkout: self
+
+  - task: AzurePowerShell@5
+    name: CheckDNSExists
+    displayName: 'Check if DNS Record exists'
+    inputs:
+      azureSubscription: '${{ variables.azureSubscription }}'
+      ScriptType: 'FilePath'
+      azurePowerShellVersion: 'LatestVersion'
+      pwsh: true
+      ScriptPath: '$(System.DefaultWorkingDirectory)/templates/scripts/CheckIfDNSExists.ps1'
+      ScriptArguments: >
+            -websiteName ${{ parameters.websiteName }}
+      
+  - task: AzureKeyVault@2
+    displayName: 'Get Ansible Tower credentials'
+    condition: eq(variables['DNSExists'], 'false') 
+    inputs:
+      azureSubscription: '${{ variables.azureSubscription }}'
+      KeyVaultName: '${{ variables.KeyVaultName }}'
+      SecretsFilter: 'AnsibleTowerSP-User,AnsibleTowerSP-Password'
+      RunAsPreJob: false
+
+  - task: PowerShell@2
+    displayName: 'Create DNS record using Building Block'
+    condition: eq(variables['DNSExists'], 'false') 
+    inputs:
+      targetType: 'inline'
+      pwsh: true
+      script: |
+        $websiteName = '${{ parameters.websiteName }}'
+
+        # Define the DNS record to check
+        $dnsRecord = $websiteName
+
+        # # Perform the DNS query using nslookup
+        # $dnsResult = nslookup $dnsRecord 2>$null
+
+        # if ($dnsResult -match "Name:") {
+        #     Write-Output "DNS record '$dnsRecord' exists. Exiting script."
+        #     exit 0
+        # } else {
+            Write-Output "DNS record '$dnsRecord' does not exist. Proceeding with creation..."
+
+            # Define the Tower API URL
+            $TowerApiUrl = 'https://tower.000ukso.sbp.eyclienthub.com/api/v2'
+
+            # Set the TLS version to ensure secure communication
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+            # Create a base64-encoded authorization 
+            $credPair = "$('$(AnsibleTowerSP-User)'):$('$(AnsibleTowerSP-Password)')"
+            $Authorization = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($credPair))
+
+            # Define the URI to fetch user information
+            $MeUri = $TowerApiUrl + '/me/'
+            $MeResult = Invoke-RestMethod -Uri $MeUri -Headers @{ "Authorization" = "Basic $Authorization" ; "Content-Type" = 'application/json'} -ErrorAction Stop -TimeoutSec 180
+
+            # Obtain a personal access token (PAT) for the user
+            $PATUri = $TowerApiUrl + '/users/' + $($MeResult.Results.id) + '/personal_tokens/'
+            $Tokens = Invoke-RestMethod -Uri $PATUri -Method POST -Headers @{ "Authorization" = "Basic $Authorization" ; "Content-Type" = 'application/json'} -ContentType "application/json"
+            $Tokens
+
+            # Create headers with the PAT for subsequent API requests
+            $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+            $headers.Add("Content-Type", "application/json")
+            $tokenId = $Tokens.id
+            $headers.Add("Authorization", "Bearer " + $Tokens.token);
+
+            # Set the template number for the job to launch (Development or Production)
+            $templateNumber = 4068
+
+            # Define the credentials for SSL
+            $ansiblecredentials = @(1, 709, 1185, 1599) 
+            # Define parameters for the job to launch
+            $bodyParameters = @{
+                credentials = $ansiblecredentials #Call to Ansible Job Creadentials
+                extra_vars = @{
+                    var_action = 'add'
+                    var_fqdn = $websiteName
+                    var_owner = '${{ variables.owner }}'
+                    var_owner_group = '${{ variables.ownerGroup }}'
+                    var_record_type = '${{ variables.recordType }}'
+                    var_value = '${{ variables.value }}'
+                    var_view = '${{ variables.view }}'
+                    var_deployment_id = '${{ variables.deploymentID }}'
+                }
+            }
+            $bodyParametersJson = $bodyParameters | ConvertTo-Json
+
+            # Launch the job using the specified template number and parameters
+            $urlTemplate = $TowerApiUrl + "/workflow_job_templates/$templateNumber/launch/"
+            $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Post -Body $bodyParametersJson -Headers $headers
+            $ansibleResponse.id
+
+            # Specify the jobId of the triggered job associated to the DNS job launched
+            $jobId= $ansibleResponse.id
+
+            # Get the status of the launched job
+            $urlTemplate = $TowerApiUrl + "/workflow_jobs/$jobId/"
+            $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Get -Headers $headers -TimeoutSec 400
+            $ansibleResponse.status
+
+            $x= $ansibleResponse.status
+            do {
+                cls
+                sleep 20
+                $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Get -Headers $headers
+                $ansibleResponse.status
+                $x= $ansibleResponse.status
+            }
+            while ($x -eq "running")
+
+            if ($x -eq "failed") {
+                Write-Host "##[error]Operation FAILED. Job details: $urlTemplate"
+            } else {
+                Write-Host "##[section]Operation SUCCESSFUL. Job details: $urlTemplate"
+            }
+
+            # Delete the personal access token to clean up after the job
+            $TokenDeleteUri = "$TowerApiUrl/tokens/$tokenId/"
+            $DeleteResult = Invoke-RestMethod -Uri $TokenDeleteUri -Method Delete -Headers @{ 'Authorization' = "Basic $Authorization" }
+        #}

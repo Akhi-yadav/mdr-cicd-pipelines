@@ -1,0 +1,30 @@
+parameters:
+- name: environment
+  type: string
+- name: envTags
+  type: string
+- name: websiteName
+
+jobs:
+    # Create Website's web.config file
+    - deployment: 
+      dependsOn: []
+      displayName: 'Create website temp folder to store web.config'
+      environment:
+        name: '${{ parameters.environment }}'
+        tags: '${{ parameters.envTags }}'
+        resourceType: VirtualMachine
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+            
+            # Create the website temp
+            - task: PowerShell@2
+              displayName: Save Files And Clean Folder
+              name: saveFilesAndCleanFolder
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/saveFilesAndCleanFolder.ps1'
+                arguments:
+                  -websiteName '{{}}'

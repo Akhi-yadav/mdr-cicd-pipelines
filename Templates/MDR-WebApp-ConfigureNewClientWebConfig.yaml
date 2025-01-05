@@ -1,0 +1,50 @@
+parameters:
+- name: environment
+  type: string
+- name: envTags
+  type: string
+- name: variables
+  type: string
+- name: websiteName
+  type: string
+- name: dataSource
+  type: string
+- name: catalogDBName
+  type: string
+- name: serviceUrl
+  type: string
+
+
+jobs:
+  # Configure web.config file
+  - deployment: configurewebconfigfile
+    displayName: 'Configure web.config file'
+    variables:
+        - template: ${{ parameters.variables }}
+    environment:
+      name: '${{ parameters.environment }}'
+      tags: '${{ parameters.envTags }}'
+      resourceType: VirtualMachine
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+      
+          # Get sql Server Login credentials    
+          - task: AzureKeyVault@2
+            displayName: 'Get SQL Server Login Credentials'
+            inputs:
+              azureSubscription: '${{ variables.azureSubscription }}'
+              KeyVaultName: '${{ variables.KeyVaultName }}'
+              SecretsFilter: 'eunumdru01sql01-sqlServerAdminUsername,eunumdru01sql01-sqlServerAdminPassword'
+              RunAsPreJob: false
+                
+          # Update web.config file
+          - task: PowerShell@2
+            displayName: 'Update web.config file'
+            inputs:
+              filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/UpdateWebConfigNewClientsFile.ps1'
+              arguments: '-websiteName "${{ parameters.websiteName }}" -datasource "${{ parameters.dataSource }}" -catalogDBName "${{ parameters.catalogDBName }}" -serviceUrl "${{ parameters.serviceUrl }}" -dbLoginUsername "$(eunumdru01sql01-sqlServerAdminUsername)" -dbLoginPassword "$(eunumdru01sql01-sqlServerAdminPassword)"'
+
+

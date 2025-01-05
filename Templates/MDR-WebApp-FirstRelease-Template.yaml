@@ -1,0 +1,128 @@
+# MDR-NON-PROD Web Deployment
+
+parameters:
+  websiteName: ''
+  envTags: ''
+  definitionId: ''
+  variables: ''
+  
+
+jobs:
+- deployment: # name of the deployment job, A-Z, a-z, 0-9, and underscore. The word "deploy" is a keyword and is unsupported as the deployment name.
+  displayName: '${{ parameters.websiteName }} First Release'  # friendly name to display in the UI
+  #continueOnError: boolean # 'true' if future jobs should run even if this job fails; defaults to 'false'
+  variables:
+    - template: ${{ parameters.variables }}
+      parameters:
+        websiteName: ${{ parameters.websiteName }}
+  workspace:
+    clean: all
+  environment:
+    name: ${{ variables.envName }} # name of the environment to run this job on.
+    #resourceName: ${{ parameters.resourceName }} # name of the resource in the environment to record the deployments against
+    #resourceId: number # resource identifier
+    resourceType: virtualMachine # type of the resource you want to target. Supported types - virtualMachine, Kubernetes
+    tags: ${{ parameters.envTags }} # comma separated tag names to filter the resources in the environment
+   
+  strategy:
+    runOnce: #rolling, canary are the other strategies that are supported
+      deploy:
+        steps:
+
+        - checkout: none
+
+        - task: AzureKeyVault@2
+          inputs:
+            azureSubscription: '${{ variables.azureSubscription }}'
+            KeyVaultName: '${{ variables.KeyVaultName }}'
+            SecretsFilter: '${{ variables.AppAccountSecretId }}' # Two or more secrets: '${{ variables.A }},${{ variables.B }}'
+            RunAsPreJob: false
+
+        - task: AzurePowerShell@5
+          inputs:
+            azureSubscription: '${{ variables.azureSubscription }}'
+            ScriptType: 'InlineScript'
+            Inline: |
+              $CertThumbprint = (Get-AzKeyVaultCertificate -VaultName ${{ variables.KeyVaultName }} -Name ${{ variables.certName }}).Thumbprint
+              $CertBase64 = Get-AzKeyVaultSecret -VaultName ${{ variables.KeyVaultName }} -Name ${{ variables.certName }} -AsPlainText
+              $CertBytes = [Convert]::FromBase64String($CertBase64)
+              $filePath = "$(Pipeline.Workspace)\${{ parameters.websiteName }}.pfx"
+              [System.IO.File]::WriteAllBytes($filePath, $CertBytes)
+              Import-PfxCertificate -CertStoreLocation 'Cert:\LocalMachine\My' -FilePath $filePath
+              echo "##vso[task.setvariable variable=CertThumbprint]$CertThumbprint"
+            azurePowerShellVersion: 'LatestVersion'
+            #pwsh: true
+
+        #- powershell: echo "azdo $(CertThumbprint)"
+
+        - task: DownloadPipelineArtifact@2
+          displayName:
+          inputs:
+            buildType: 'specific'
+            project: ${{ variables.projectId }}
+            definition: ${{ parameters.definitionId }}
+            buildVersionToDownload: 'latest'
+            artifactName: 'drop'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Pipeline.Workspace)'
+
+        - powershell: |
+
+            Remove-IISSiteBinding "${{ parameters.websiteName }}" "*:443:${{ parameters.websiteName }}" "https" -Confirm:$false -ErrorAction SilentlyContinue
+            
+        - task: IISWebAppManagementOnMachineGroup@0
+          displayName: 'Manage IISWebsite'
+          inputs:
+            IISDeploymentType: IISWebsite
+            ActionIISWebsite: CreateOrUpdateWebsite
+            WebsiteName: '${{ parameters.websiteName }}' # Required when ActionIISWebsite = CreateOrUpdateWebsite.
+            # WebsitePhysicalPath: '%SystemDrive%\${{ parameters.websiteName }}'
+            WebsitePhysicalPath: 'F:\Apps\${{ parameters.websiteName }}'
+            WebsitePhysicalPathAuth: WebsiteWindowsAuth
+            WebsiteAuthUserName: '${{ variables.AppAccountId }}'
+            WebsiteAuthUserPassword: '$(${{ variables.AppAccountSecretId }})'
+            AddBinding: true
+            Bindings: |
+              {
+                "bindings":[{
+                    "protocol":"http",
+                    "ipAddress":"All Unassigned",
+                    "port":"80",
+                    "hostname":"${{ parameters.websiteName }}",
+                    "sniFlag":false
+                  },
+                  {
+                    "protocol":"https",
+                    "ipAddress":"All Unassigned",
+                    "port":"443",
+                    "hostname":"${{ parameters.websiteName }}",
+                    "sslThumbprint":"$(CertThumbprint)",
+                    "sniFlag":true
+                  }
+                ]
+              }
+            CreateOrUpdateAppPoolForWebsite: true
+            AppPoolNameForWebsite: '${{ parameters.websiteName }}'
+            AppPoolIdentityForWebsite: SpecificUser
+            AppPoolUsernameForWebsite: '${{ variables.AppAccountId }}'
+            AppPoolPasswordForWebsite: '$(${{ variables.AppAccountSecretId }})'
+
+        - task: IISWebAppDeploymentOnMachineGroup@0
+          displayName: 'Deploy to IIS Website'
+          inputs:
+            WebSiteName: '${{ parameters.websiteName }}'
+            Package: '$(Pipeline.Workspace)\**\*.zip'
+
+        - powershell: |
+
+            $file = $Env:windir+'\system32\drivers\etc\hosts'
+            $hostfile = Get-Content $file
+            $hostscontent = $hostfile | select-string ${{ parameters.websiteName }}
+            $value = "`t127.0.0.1`t${{ parameters.websiteName }}`n"
+
+            if ($hostscontent -eq $null) { Add-Content -Path $file -Value $value -Force }
+
+            New-WebVirtualDirectory -Site ${{ parameters.websiteName }} -Name "DisclosureReportWorkflow" -PhysicalPath "F:\${{ parameters.websiteName }}\App_Data\DisclosureReportWorkflow" -Force
+            Set-WebConfigurationProperty 'system.webServer/directoryBrowse' -Name enabled -Value false -PSPath "IIS:\Sites\${{ parameters.websiteName }}" #set to false as required by Infosec. For public files we will find another solution for testing
+            #Set-WebConfigurationProperty 'system.webserver/rewrite/rules/rule[@name="Redirect to HTTPS"]' -Name enabled -Value false -PSPath "IIS:\Sites\${{ parameters.websiteName }}"
+            #Set-WebConfigurationproperty 'connectionStrings/add[@name="DefaultConnection"]' -Name connectionString -value "Server=tcp:$(sqlServer).database.windows.net,1433;Initial Catalog=$(sqlDB);Persist Security Info=False;User ID=$(eundmdrdevsql01-sqlServerAdminUsername);Password=$(eundmdrdevsql01-sqlServerAdminPassword);MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" -PSPath "IIS:\Sites\${{ parameters.websiteName }}"

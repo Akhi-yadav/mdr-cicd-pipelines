@@ -1,0 +1,25 @@
+parameters:
+  environment: ''
+  envTags: ''
+  IISStatus: ''
+
+jobs:
+  # IIS Action
+  - deployment: ${{ parameters.IISStatus }}
+    displayName: ${{ parameters.IISStatus }}
+    condition: always()
+    environment:
+      name: '${{ parameters.environment }}'
+      tags: '${{ parameters.envTags }}'
+      resourceType: VirtualMachine  
+    strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+            - task: PowerShell@2
+              displayName: ${{ parameters.IISStatus }}
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/IISservicestatus.ps1'
+                arguments:
+                    -${{ parameters.IISStatus }}

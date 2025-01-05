@@ -1,0 +1,154 @@
+parameters:
+  websiteName: ''
+   # action: '' # create / delete
+  variables: ''
+
+jobs:
+  - job: 'sql_db'
+    displayName: 'SQL database'
+    workspace:
+      clean: all
+    variables:
+      - template: ../variables/${{ parameters.variables }}
+        parameters:
+          websiteName: ${{ parameters.websiteName }}
+          # action: ${{ parameters.action }}
+
+    steps:
+      - checkout: none
+
+      - task: AzurePowerShell@5
+        name: CheckDatabaseExists
+        displayName: 'Check if Azure SQL Database exists'
+        inputs:
+          azureSubscription: '${{ variables.azureSubscription }}'
+          ScriptType: 'InlineScript'
+          azurePowerShellVersion: 'LatestVersion'
+          pwsh: true
+          Inline: |
+            $subscriptionId = '${{ variables.azureSubscription }}'
+            $resourceGroupName = '${{ variables.resourceGroupName }}'
+            $serverName = '${{ variables.sqlServerName }}'
+            $databaseName = '${{ variables.sqlServerName }}_${{ variables.certName }}'
+      
+            # Authenticate to Azure
+            Connect-AzAccount -SubscriptionId $subscriptionId
+      
+            # Check if the database exists
+            $database = Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $serverName -DatabaseName $databaseName -ErrorAction SilentlyContinue
+      
+            if ($null -ne $database) {
+              Write-Output "Database '$databaseName' exists. Exiting script."
+              Write-Host "##vso[task.setvariable variable=DatabaseExists;]true"
+              exit 0
+            } else {
+              Write-Output "Database '$databaseName' does not exist. It needs to be created."
+              Write-Host "##vso[task.setvariable variable=DatabaseExists;]false"
+            }
+
+      - task: AzureKeyVault@2
+        displayName: 'Get Ansible Tower credentials'
+        condition: eq(variables['DatabaseExists'], 'false')
+        inputs:
+          azureSubscription: '${{ variables.azureSubscription }}'
+          KeyVaultName: '${{ variables.KeyVaultName }}'
+          SecretsFilter: 'AnsibleTowerSP-User,AnsibleTowerSP-Password'
+          RunAsPreJob: false
+
+      - task: PowerShell@2
+        displayName: 'Create SQL DB using Building Block'
+        condition: eq(variables['DatabaseExists'], 'false')
+        inputs:
+          targetType: 'inline'
+          pwsh: true
+          script: |
+            # $action = '${{ parameters.action }}'
+
+            # Define the Tower API URL
+            $TowerApiUrl = "https://tower.000ukso.sbp.eyclienthub.com:443/api/v2"
+
+            # Set the TLS version to ensure secure communication
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+            # Create a base64-encoded authorization
+            $credPair = "$('$(AnsibleTowerSP-User)'):$('$(AnsibleTowerSP-Password)')"
+            $Authorization = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($credPair))
+
+            # Define the URI to fetch user information
+            $MeUri = $TowerApiUrl + '/me/'
+            $MeResult = Invoke-RestMethod -Uri $MeUri -Headers @{ "Authorization" = "Basic $Authorization" ; "Content-Type" = 'application/json'} -ErrorAction Stop -TimeoutSec 180
+
+            # Obtain a personal access token (PAT) for the user
+            $PATUri = $TowerApiUrl + '/users/' + $($MeResult.Results.id) + '/personal_tokens/'
+            $Tokens = Invoke-RestMethod -Uri $PATUri -Method POST -Headers @{ "Authorization" = "Basic $Authorization" ; "Content-Type" = 'application/json'} -ContentType "application/json"
+            $Tokens
+
+            # Create headers with the PAT for subsequent API requests
+            $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+            $headers.Add("Content-Type", "application/json")
+            $tokenId = $Tokens.id
+            $headers.Add("Authorization", "Bearer " + $Tokens.token);
+
+            # Set the template number for the job to launch (Development or Production)
+            $templateNumber = 13769
+            $ansiblecredentials = @(709,1599,1185,2922)
+            # Define parameters for the job to launch
+            $bodyParameters = @{
+                extra_vars = @{
+                    "credentials"= "${{variables.ansiblecredentials}}"
+                    "var_location"= "${{variables.location}}"
+                    "var_environment"= "${{variables.environment}}"
+                    "var_owner"= "${{variables.owner}}"
+                    "var_chargeCode"= "${{variables.chargeCode}}"
+                    "var_subscriptionId"= "${{variables.azure_rm_subid}}"
+                    "var_deploymentId"= "${{variables.deploymentID}}"
+                    "var_resourceGroupName"= "${{ variables.resourceGroupName }}"
+                    "var_dbName"= @("${{ variables.sqlServerName }}_${{ variables.certName }}")
+                    "var_databaseTier"= "${{ variables.databaseTier }}"
+                    "var_skuName"= "${{ variables.databaseSkuName }}"
+                    "var_serverName"= "${{ variables.sqlServerName }}"
+                    "var_elasticPoolName"= "${{ variables.elasticPoolName }}"
+                    "var_azure_rm_subid"= "${{variables.azure_rm_subid}}"
+                    "AZURE_RM_CLIENTID" =  "${{variables.azure_rm_clientid}}"
+                    "AZURE_RM_SECRET" = "${{variables.azure_rm_secretid}}"
+                    "AZURE_RM_TENANTID" = "${{variables.azure_rm_tenantid}}"
+                    "var_omsSubscriptionId"= "${{variables.omsSubscriptionId}}"
+                    "var_omsResourceGroup"= "${{variables.omsResourceGroup}}"
+                    "var_omsWorkspaceName"= "${{variables.omsWorkspaceName}}"
+                }
+            }
+
+            $bodyParametersJson = $bodyParameters | ConvertTo-Json -Depth 10
+
+            # Launch the job using the specified template number and parameters
+            $urlTemplate = $TowerApiUrl + "/job_templates/" + $templateNumber + "/launch/";
+            $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Post -Body $bodyParametersJson -Headers $headers
+            $ansibleResponse.id
+
+            # Specify the jobId of the triggered job associated to the DNS job launched
+            $jobId = $ansibleResponse.id
+
+            # Get the status of the launched job
+            Start-Sleep -Seconds 5
+            $urlTemplate = $TowerApiUrl + "/jobs/$($ansibleResponse.id)/";
+            $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Get -Headers $headers -TimeoutSec 400
+            $ansibleResponse.status
+
+            $x= $ansibleResponse.status
+            do {
+                cls
+                sleep 20
+                $ansibleResponse = Invoke-RestMethod -Uri $urlTemplate -Method Get -Headers $headers
+                $ansibleResponse.status
+                $x= $ansibleResponse.status
+            } while ($x -eq "running")
+
+            if ($x -eq "failed") {
+                Write-Host "##[error]Operation FAILED. Job details: $urlTemplate"
+            } else {
+                Write-Host "##[section]Operation SUCCESSFUL. Job details: $urlTemplate"
+            }
+
+            # Delete the personal access token to clean up after the job
+            $TokenDeleteUri = "$TowerApiUrl/tokens/$tokenId/"
+            $DeleteResult = Invoke-RestMethod -Uri $TokenDeleteUri -Method Delete -Headers @{ 'Authorization' = "Basic $Authorization" }

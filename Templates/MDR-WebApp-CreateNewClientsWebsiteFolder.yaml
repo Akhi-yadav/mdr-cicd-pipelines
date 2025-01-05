@@ -1,0 +1,39 @@
+parameters:
+- name: environment
+  type: string
+- name: envTags
+  type: string
+- name: websiteName
+  type: object
+
+jobs:
+  # Create website's files folder in New Clients Files folder
+  - deployment: 
+    dependsOn: []
+    displayName: 'Create website temp folder to store license.bin and web.config files'
+    environment:
+      name: '${{ parameters.environment }}'
+      tags: '${{ parameters.envTags }}'
+      resourceType: VirtualMachine
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          # Create the website folder in NewClientsFiles
+          - task: PowerShell@2
+            displayName: 'Create Website folder in NewClientsFiles Folder'
+            inputs:
+              filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/CreateWebsiteNewClientsFilesFolder.ps1'
+              arguments:
+                -websiteName ${{ parameters.websiteName }}
+          
+          # Store generic web.config file
+          - task: PowerShell@2
+            displayName: 'Store generic web.config file'
+            inputs:
+              filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/StoreWebConfig.ps1'
+              arguments:
+                -websiteName ${{ parameters.websiteName }}
+          

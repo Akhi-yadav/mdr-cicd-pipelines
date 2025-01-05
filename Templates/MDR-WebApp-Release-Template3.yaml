@@ -1,0 +1,88 @@
+parameters:
+- name: environment
+  type: string
+- name: envTags
+  type: string
+- name: websiteList
+  type: object
+- name: clusterSite
+  type: string
+
+jobs:
+  # Update Users Folder and Back Up
+  - ${{ each websiteName in parameters.websiteList }}:
+    # Back Up all folders
+    - deployment: backUp_${{ websiteName }}
+      dependsOn: []
+      displayName: 'Back Up Old Version for ${{ websiteName }} Folder'
+      environment:
+        name: '${{ parameters.environment }}'
+        tags: '${{ parameters.envTags }}'
+        resourceType: VirtualMachine
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+            
+            #BackUp Old Versions Folder
+            - task: PowerShell@2
+              displayName: Backup Old Version Folder
+              name: backupOldVersionsFolder
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/backupOldVersionsFolder.ps1'
+                arguments:
+                  -websiteName '${{ websiteName }}.${{ parameters.clusterSite }}'
+
+    - deployment: update_version_${{ websiteName }}
+      dependsOn: backUp_${{ websiteName }}
+      displayName: 'Update ${{ websiteName }} Folder'
+      environment:
+        name: '${{ parameters.environment }}'
+        tags: '${{ parameters.envTags }}'
+        resourceType: VirtualMachine
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            # Save the config and license files in F:\TempFolder and Clean User's Folder
+            - task: PowerShell@2
+              displayName: Save Files And Clean Folder
+              name: saveFilesAndCleanFolder
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/saveFilesAndCleanFolder.ps1'
+                arguments:
+                  -websiteName '${{ websiteName }}.${{ parameters.clusterSite }}'
+            
+            # Copy downloaded Artifact in User's folder
+            - task: PowerShell@2
+              displayName: Move Artifact to User's Folder
+              name: moveArtifactToUserFolder
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/moveArtifactToWebsiteFolder.ps1'
+                arguments:
+                  -websiteName '${{ websiteName }}.${{ parameters.clusterSite }}'
+
+    - deployment: restoreOldVersion_${{ websiteName }}
+      dependsOn: update_version_${{ websiteName }}
+      condition: failed('update_version_${{ websiteName }}')
+      displayName: 'Restore Old Version in ${{ websiteName }} Folder'
+      environment:
+        name: '${{ parameters.environment }}'
+        tags: '${{ parameters.envTags }}'
+        resourceType: VirtualMachine
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            # Restore OldVersion from BackUp if there was an error in update
+            - task: PowerShell@2
+              displayName: Restore OldVersion from BackUp
+              inputs:
+                filePath: '$(System.DefaultWorkingDirectory)/templates/scripts/restoreOldVersion.ps1'
+                arguments:
+                  -websiteName '${{ websiteName }}.${{ parameters.clusterSite }}'

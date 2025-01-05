@@ -1,0 +1,109 @@
+# MDR-NON-PROD Vulnerability Management Platform (VMP)
+
+parameters:
+  subId: ''
+  rG: ''
+  VMName: ''
+  azureSubscription: ''
+
+jobs:
+- job:
+  displayName: 'VMP - ${{ parameters.VMName }}'
+  # pool:
+  #   vmImage: windows-latest
+  steps:
+
+  - checkout: none
+
+  - task: AzurePowerShell@5
+    inputs:
+      azureSubscription: '${{ parameters.azureSubscription }}'
+      azurePowerShellVersion: 'LatestVersion'
+      pwsh: true
+      ScriptType: 'InlineScript'
+      Inline: |
+
+        # The script can target a single VM or the entire group of machines from the Azure resource group and can be triggered upon a schedule via AzDO pipeline.
+
+        # 1.	It checks if the VM (s) have the PSWindowsUpdate module installed, if yes, it updates the module, if not, it installs it.
+        # 2.	It looks for and install the latest Windows Updates with such module.
+        # 3.	It checks if the VM (s) have the dotnet-core-uninstall tool installed, if not it installs it.
+        # 4.	It downloads the latest available version of the ASP.NET Core Runtime Windows Hosting Bundle 6.
+        # 5.	It removes all the old versions of dotnet (sdks, runtimes, aspnet runtimes and hosting bundles). Otherwise, they’ll be kept installed and will keep show up over the next GVM weekly scans.
+        # 6.	It install the Hosting Bundle (latest v6) downloaded at step 3.
+        # 7.	It restarts the machine.
+             
+        [System.String]$ScriptString = {
+        
+        ##### PSWindowsUpdate
+        
+        # Get-Command –module PSWindowsUpdate
+        
+        Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
+        
+        if (Get-InstalledModule PSWindowsUpdate) {
+        
+        Update-Module PSWindowsUpdate
+        
+        } else {
+        
+        Install-Module -Name PSWindowsUpdate
+        
+        }
+        
+        Set-PSRepository -Name "PSGallery" -InstallationPolicy Untrusted
+        
+        Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot
+        
+        ##### dotnet-core-uninstall
+        
+        if (-Not (Test-Path "C:\Program Files (x86)\dotnet-core-uninstall\")) {
+        
+        $downloadURL = 'https://github.com/dotnet/cli-lab/releases/download/1.6.0/dotnet-core-uninstall-1.6.0.msi'
+        $outFile = "C:\Installers\$(Split-Path -Leaf $downloadURL)"
+        
+        Invoke-WebRequest $downloadURL -OutFile $outFile
+        
+        Start-Process msiexec "/i $outFile /qn" -Wait
+        
+        rm $outFile -Force
+        
+        }
+        
+        C:\"Program Files (x86)"\dotnet-core-uninstall\dotnet-core-uninstall remove --all --sdk -y --force
+        C:\"Program Files (x86)"\dotnet-core-uninstall\dotnet-core-uninstall remove --all --runtime -y --force
+        C:\"Program Files (x86)"\dotnet-core-uninstall\dotnet-core-uninstall remove --all --aspnet-runtime -y --force
+        C:\"Program Files (x86)"\dotnet-core-uninstall\dotnet-core-uninstall remove --all --hosting-bundle -y --force
+        
+        # dotnet-core-uninstall list
+        
+        ##### dotnet-hosting-win
+        
+        $request = [System.Net.WebRequest]::Create('https://aka.ms/dotnet/6.0/dotnet-hosting-win.exe')
+        $request.AllowAutoRedirect=$false
+        $response=$request.GetResponse()
+        $downloadURL = $response.GetResponseHeader("Location")
+        $outFile = "C:\Installers\$(Split-Path -Leaf $downloadURL)"
+        
+        Invoke-WebRequest $downloadURL -OutFile $outFile
+        
+        if (Test-Path $outFile) {
+        
+        Start-Process -FilePath $outFile -Verb RunAs -ArgumentList "/S" -PassThru -Wait
+        
+        rm $outFile -Force
+        
+        } else {
+        
+        Write-Host "$outFile not found."
+        
+        }
+        
+        dotnet --info
+        
+        Restart-Computer -Force
+        
+        }
+
+        Set-AzContext -Subscription ${{ parameters.subId }}
+        Invoke-AzVMRunCommand -ResourceGroupName ${{ parameters.rG }} -VMName ${{ parameters.VMName }} -CommandId 'RunPowerShellScript' -ScriptString $ScriptString

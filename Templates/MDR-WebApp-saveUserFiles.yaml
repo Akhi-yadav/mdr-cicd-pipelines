@@ -1,0 +1,10 @@
+parameters:
+- name: folderPath
+  type: string
+- name: variables
+  type: string
+- name: definitionId
+  type: string
+
+
+jobs:
