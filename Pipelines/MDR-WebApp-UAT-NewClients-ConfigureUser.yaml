@@ -1,0 +1,78 @@
+trigger: none
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+  default: 'EUNUMDRU01RSG01' # comma separated tag names to filter the resources in the environment
+- name: envTags
+  displayName: 'Target VM or Availability set:'
+  type: string
+  default: 'EUNUMDRU01AVS01' # comma separated tag names to filter the resources in the environment
+- name: websiteName
+  displayName: "Web Site to configure and add (name.mdr-web-uat.ey.com)"
+  type: string
+  default: name.mdr-web-uat.ey.com
+- name: dataSource
+  displayName: "Datasource (sqlServerName.database.windows.net)"
+  type: string
+  default: 'eunumdru01sql01.database.windows.net'
+- name: catalogDBName
+  displayName: "Catalog DB Name (sqlServerName_<websiteName>)"
+  type: string
+  default: 'eunumdru01sql01_<websiteName>'
+- name: serviceUrl
+  displayName: "Service URL (http://ipaddress:port/api/)"
+  type: string
+  default: 'http://10.98.103.4:85/api/'
+- name: definitionId
+  displayName: 'CI pipeline (Artifact):'
+  type: string
+  default: 'MDR-WebApp-DMO-CI-y7k9h.mdr-web-demo.ey.com'
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+
+# Stop IIS
+- stage: StopIIS
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'stopIIS'
+
+# First Release of the client
+- stage: firstRelease
+  jobs:
+    - template: ../templates/MDR-WebApp-FirstRelease-Template.yaml
+      parameters:
+        websiteName: ${{ parameters.websiteName }}
+        envTags: ${{ parameters.envTags }}
+        definitionId: ${{ parameters.definitionId }}
+        variables: ../variables/MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml
+
+# # Configure web.config file
+# - stage: configureWebConfig
+#   jobs:
+#     - template: ../templates/MDR-WebApp-ConfigureNewClientWebConfig.yaml
+#       parameters:
+#         environment: ${{ parameters.environment }}
+#         envTags: ${{ parameters.envTags }}
+#         variables: ../variables/MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml
+#         websiteName: ${{ parameters.websiteName }}
+#         dataSource: ${{ parameters.dataSource }}
+#         catalogDBName: ${{ parameters.catalogDBName }}
+#         serviceUrl: ${{ parameters.serviceUrl }}
+
+# Start IIS
+- stage: StartIIS
+  condition: always()
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'startIIS'

@@ -1,0 +1,169 @@
+trigger: none
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+- name: envTags
+  displayName: 'Target VM or Availability set:'
+  type: string
+- name: websiteList
+  displayName: "Specify Web Site Names to update (<name>.mdr-web-uat.ey.com)"
+  type: object
+  default:
+    - 'name'
+- name: definitionId
+  displayName: 'CI pipeline (Artifact):'
+  type: string
+  default: 'MDR-WebApp-DMO-CI-y7k9h.mdr-web-demo.ey.com'
+
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+
+# Stop IIS
+- stage: StopIIS
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'stopIIS'
+
+- ${{ if eq(parameters.envTags, 'cluster01') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster01-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp01.mdr.ey.com'
+
+- ${{ if eq(parameters.envTags, 'cluster02') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster02-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp02.mdr.ey.com'
+
+- ${{ if eq(parameters.envTags, 'cluster03') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster03-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp03.mdr.ey.com'
+
+- ${{ if eq(parameters.envTags, 'cluster04') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster04-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp04.mdr.ey.com'
+
+- ${{ if eq(parameters.envTags, 'cluster05') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster05-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp05.mdr.ey.com'
+
+- ${{ if eq(parameters.envTags, 'cluster06') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-Cluster06-Variables.yaml
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'neapp06.mdr.ey.com'
+
+# Start IIS
+- stage: StartIIS
+  condition: always()
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'startIIS'

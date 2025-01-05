@@ -1,0 +1,60 @@
+trigger: none
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+  default: 'EUNUMDRU01RSG01' # comma separated tag names to filter the resources in the environment
+- name: envTags
+  displayName: 'Target VM or Availability set:'
+  type: string
+  default: 'EUNUMDRU01AVS01' 
+- name: websiteList
+  displayName: 'New Web Site (*.mdr-web-*.ey.com)'
+  type: object
+  default:
+  - 'k92fs.mdr-web-uat.ey.com'
+- name: backendPoolName
+  displayName: 'AppGw Backend Pool:'
+  type: string
+  default: 'mdr-webApp-backend'
+
+stages:
+
+- stage: SSL
+  jobs:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: ..\templates\MDR-WebApp-SSL-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        variables: 'MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml'
+
+- stage: DNS
+  dependsOn: []
+  jobs:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: ..\templates\MDR-WebApp-DNS-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        variables: 'MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml'
+
+- stage: AAG
+  dependsOn: [SSL]
+  condition: succeeded()
+  jobs:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: ..\templates\MDR-WebApp-Appgateway-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        backendPoolName: ${{ parameters.backendPoolName }}
+        variables: 'MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml'
+
+- stage: SQL
+  dependsOn: []
+  jobs:
+  - ${{ each websiteName in parameters.websiteList }}:
+    - template: ..\templates\MDR-WebApp-SQLDatabase-Template.yaml
+      parameters:
+        websiteName: ${{ websiteName }}
+        variables: 'MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml'
+

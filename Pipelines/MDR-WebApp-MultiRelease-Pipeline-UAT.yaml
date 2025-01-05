@@ -1,0 +1,68 @@
+trigger: none
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+  default: 'EUNUMDRU01RSG01' # comma separated tag names to filter the resources in the environment
+- name: envTags
+  displayName: 'Target VM or Availability set:'
+  type: string
+  default: 'EUNUMDRU01AVS01' # comma separated tag names to filter the resources in the environment
+- name: websiteList
+  displayName: "Specify Web Site Names to update (<name>.mdr-web-uat.ey.com)"
+  type: object
+  default:
+    - 'name'
+- name: definitionId
+  displayName: 'CI pipeline (Artifact):'
+  type: string
+  default: 'MDR-WebApp-DMO-CI-y7k9h.mdr-web-demo.ey.com'
+
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+
+# Stop IIS
+- stage: StopIIS
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'stopIIS'
+
+
+- ${{ if eq(parameters.envTags, 'EUNUMDRU01AVS01') }}:
+  # Download New Artifact
+  - stage: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-DownloadArtifact.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          definitionId: ${{ parameters.definitionId }}
+          variables: ../variables/MDR-WebApp-EUNUMDRU01RSG01-Variables.yaml
+
+  # Update Specific Websites
+  - stage: ReleaseOnly
+    dependsOn: downloadNewArtifact
+    jobs:
+      - template: ../templates/MDR-WebApp-Release-Template3.yaml
+        parameters:
+          environment: ${{ parameters.environment }}
+          envTags: ${{ parameters.envTags }}
+          websiteList: ${{ parameters.websiteList }}
+          clusterSite: 'mdr-web-uat.ey.com'
+
+# Start IIS
+- stage: StartIIS
+  condition: always()
+  jobs:
+    - template: ../templates/MDR-WebApp-IISStatus.yaml
+      parameters:
+        environment: ${{ parameters.environment }}
+        envTags: ${{ parameters.envTags }}
+        IISStatus: 'startIIS'
